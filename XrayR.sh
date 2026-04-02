@@ -9,6 +9,38 @@ version="v0.9.41"
 XRAYR_RELEASE_REPO="${XRAYR_RELEASE_REPO:-clavin-dev/XrayR-release}"
 XRAYR_SOURCE_REPO="${XRAYR_SOURCE_REPO:-clavin-dev/XrayR}"
 
+download_release_raw() {
+    local target="$1"
+    local file_name="$2"
+    local primary_url="https://raw.githubusercontent.com/${XRAYR_RELEASE_REPO}/master/${file_name}"
+    local backup_url="https://cdn.jsdelivr.net/gh/${XRAYR_RELEASE_REPO}@master/${file_name}"
+
+    curl -fsSL --retry 3 --connect-timeout 10 -o "${target}" "${primary_url}" \
+        || curl -fsSL --retry 3 --connect-timeout 10 -o "${target}" "${backup_url}"
+}
+
+run_remote_install() {
+    local temp_installer
+    temp_installer=$(mktemp)
+
+    if ! download_release_raw "${temp_installer}" install.sh; then
+        rm -f "${temp_installer}"
+        echo -e "${red}下载安装脚本失败，请检查网络或稍后重试${plain}"
+        return 1
+    fi
+
+    if ! head -n 1 "${temp_installer}" | grep -q '^#!/bin/bash'; then
+        rm -f "${temp_installer}"
+        echo -e "${red}下载到的安装脚本内容异常（可能触发了 GitHub 限流），请稍后重试${plain}"
+        return 1
+    fi
+
+    bash "${temp_installer}" "$@"
+    local install_result=$?
+    rm -f "${temp_installer}"
+    return ${install_result}
+}
+
 # check root
 [[ $EUID -ne 0 ]] && echo -e "${red}错误: ${plain} 必须使用root用户运行此脚本！\n" && exit 1
 
@@ -86,7 +118,7 @@ before_show_menu() {
 }
 
 install() {
-    bash <(curl -Ls https://raw.githubusercontent.com/${XRAYR_RELEASE_REPO}/master/install.sh)
+    run_remote_install
     if [[ $? == 0 ]]; then
         if [[ $# == 0 ]]; then
             start
@@ -110,7 +142,7 @@ update() {
 #        fi
 #        return 0
 #    fi
-    bash <(curl -Ls https://raw.githubusercontent.com/${XRAYR_RELEASE_REPO}/master/install.sh) $version
+    run_remote_install "${version}"
     if [[ $? == 0 ]]; then
         echo -e "${green}更新完成，已自动重启 XrayR，请使用 XrayR log 查看运行日志${plain}"
         exit
@@ -272,12 +304,19 @@ install_bbr() {
 }
 
 update_shell() {
-    wget -O /usr/bin/XrayR -N --no-check-certificate https://raw.githubusercontent.com/${XRAYR_RELEASE_REPO}/master/XrayR.sh
-    if [[ $? != 0 ]]; then
+    temp_shell=$(mktemp)
+    if ! download_release_raw "${temp_shell}" XrayR.sh; then
+        rm -f "${temp_shell}"
         echo ""
         echo -e "${red}下载脚本失败，请检查本机能否连接 Github${plain}"
         before_show_menu
+    elif ! head -n 1 "${temp_shell}" | grep -q '^#!/bin/bash'; then
+        rm -f "${temp_shell}"
+        echo ""
+        echo -e "${red}下载到的脚本内容异常（可能触发了 GitHub 限流），请稍后再试${plain}"
+        before_show_menu
     else
+        mv "${temp_shell}" /usr/bin/XrayR
         chmod +x /usr/bin/XrayR
         echo -e "${green}升级脚本成功，请重新运行脚本${plain}" && exit 0
     fi

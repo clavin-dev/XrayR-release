@@ -9,6 +9,16 @@ cur_dir=$(pwd)
 XRAYR_REPO="${XRAYR_REPO:-clavin-dev/XrayR}"
 XRAYR_RELEASE_REPO="${XRAYR_RELEASE_REPO:-clavin-dev/XrayR-release}"
 
+download_release_raw() {
+    local target="$1"
+    local file_name="$2"
+    local primary_url="https://raw.githubusercontent.com/${XRAYR_RELEASE_REPO}/master/${file_name}"
+    local backup_url="https://cdn.jsdelivr.net/gh/${XRAYR_RELEASE_REPO}@master/${file_name}"
+
+    curl -fsSL --retry 3 --connect-timeout 10 -o "${target}" "${primary_url}" \
+        || curl -fsSL --retry 3 --connect-timeout 10 -o "${target}" "${backup_url}"
+}
+
 # check root
 [[ $EUID -ne 0 ]] && echo -e "${red}错误：${plain} 必须使用root用户运行此脚本！\n" && exit 1
 
@@ -142,8 +152,10 @@ install_XrayR() {
     chmod +x XrayR
     mkdir /etc/XrayR/ -p
     rm /etc/systemd/system/XrayR.service -f
-    file="https://raw.githubusercontent.com/${XRAYR_RELEASE_REPO}/master/XrayR.service"
-    wget -q -N --no-check-certificate -O /etc/systemd/system/XrayR.service ${file}
+    if ! download_release_raw /etc/systemd/system/XrayR.service XrayR.service; then
+        echo -e "${red}下载 XrayR.service 失败，请检查网络或稍后重试${plain}"
+        exit 1
+    fi
     #cp -f XrayR.service /etc/systemd/system/
     systemctl daemon-reload
     systemctl stop XrayR
@@ -183,7 +195,18 @@ install_XrayR() {
     if [[ ! -f /etc/XrayR/rulelist ]]; then
         cp rulelist /etc/XrayR/
     fi
-    curl -o /usr/bin/XrayR -Ls https://raw.githubusercontent.com/${XRAYR_RELEASE_REPO}/master/XrayR.sh
+    temp_script=$(mktemp)
+    if ! download_release_raw "${temp_script}" XrayR.sh; then
+        rm -f "${temp_script}"
+        echo -e "${red}下载 XrayR 管理脚本失败，请检查网络或稍后重试${plain}"
+        exit 1
+    fi
+    if ! head -n 1 "${temp_script}" | grep -q '^#!/bin/bash'; then
+        rm -f "${temp_script}"
+        echo -e "${red}下载到的 XrayR 管理脚本内容异常（可能触发了 GitHub 限流），请稍后重试${plain}"
+        exit 1
+    fi
+    mv "${temp_script}" /usr/bin/XrayR
     chmod +x /usr/bin/XrayR
     ln -s /usr/bin/XrayR /usr/bin/xrayr # 小写兼容
     chmod +x /usr/bin/xrayr
